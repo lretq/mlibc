@@ -755,6 +755,13 @@ int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
 	return 0;
 }
 
+int sys_tcsendbreak(int fd, int) {
+	auto ret = do_syscall(SYS_ioctl, fd, TCSBRK, 0);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
 int sys_tcflush(int fd, int queue) {
 	auto ret = do_syscall(SYS_ioctl, fd, TCFLSH, queue);
 	if (int e = sc_error(ret); e)
@@ -842,6 +849,13 @@ int sys_shutdown(int sockfd, int how) {
 	if (int e = sc_error(ret); e) {
 		return e;
 	}
+	return 0;
+}
+
+int sys_sockatmark(int sockfd, int *out) {
+	auto ret = do_syscall(SYS_ioctl, sockfd, SIOCATMARK, out);
+	if (int e = sc_error(ret); e)
+		return e;
 	return 0;
 }
 
@@ -1070,6 +1084,15 @@ int sys_timer_delete(timer_t t) {
 	if (int e = sc_error(ret); e) {
 		return e;
 	}
+	return 0;
+}
+
+int sys_timer_getoverrun(timer_t t, int *out) {
+	auto ret = do_syscall(SYS_timer_getoverrun, t);
+	if (int e = sc_error(ret); e)
+		return e;
+
+	*out = sc_int_result<int>(ret);
 	return 0;
 }
 
@@ -2504,6 +2527,21 @@ int sys_shmget(int *shm_id, key_t key, size_t size, int shmflg) {
 	if (int e = sc_error(ret); e)
 		return e;
 	*shm_id = sc_int_result<int>(ret);
+	return 0;
+}
+
+int sys_sigqueue(pid_t pid, int sig, const union sigval val) {
+	siginfo_t si;
+	memset(&si, 0, sizeof(si));
+	si.si_signo = sig;
+	si.si_code = SI_QUEUE;
+	si.si_value = val;
+	si.si_uid = mlibc::sys_getuid();
+	si.si_pid = mlibc::sys_getpid();
+
+	auto ret = do_syscall(SYS_rt_sigqueueinfo, pid, sig, &si);
+	if (int e = sc_error(ret); e)
+		return e;
 	return 0;
 }
 

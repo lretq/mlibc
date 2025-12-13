@@ -14,6 +14,8 @@
 #include <mlibc/allocator.hpp>
 #include <mlibc/debug.hpp>
 #include <mlibc/stdlib.hpp>
+#include <mlibc/locale.hpp>
+#include <mlibc/strtofp.hpp>
 #include <mlibc/posix-sysdeps.hpp>
 #include <mlibc/rtld-config.hpp>
 
@@ -116,14 +118,12 @@ void srand48(long int seed) {
 	seed48(arr);
 }
 
-long jrand48(unsigned short [3]) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+long jrand48(unsigned short s[3]) {
+	return (int32_t) (eand48_step(s, seed_48 + 3) >> 16);
 }
 
 long int mrand48(void) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	return jrand48(seed_48);
 }
 
 // Borrowed from musl
@@ -498,24 +498,21 @@ int grantpt(int) {
 	return 0;
 }
 
-double strtod_l(const char *__restrict__ nptr, char ** __restrict__ endptr, locale_t) {
-	mlibc::infoLogger() << "mlibc: strtod_l ignores locale!" << frg::endlog;
-	return strtod(nptr, endptr);
+double strtod_l(const char *__restrict__ nptr, char ** __restrict__ endptr, locale_t loc) {
+	return mlibc::strtofp<double>(nptr, endptr, static_cast<mlibc::localeinfo *>(loc));
 }
 
-long double strtold_l(const char *__restrict__, char ** __restrict__, locale_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+long double strtold_l(const char *__restrict__ nptr, char ** __restrict__ endptr, locale_t loc) {
+	return mlibc::strtofp<long double>(nptr, endptr, static_cast<mlibc::localeinfo *>(loc));
 }
 
-float strtof_l(const char *__restrict__ nptr, char **__restrict__ endptr, locale_t) {
-	mlibc::infoLogger() << "mlibc: strtof_l ignores locales" << frg::endlog;
-	return strtof(nptr, endptr);
+float strtof_l(const char *__restrict__ nptr, char **__restrict__ endptr, locale_t loc) {
+	return mlibc::strtofp<float>(nptr, endptr, static_cast<mlibc::localeinfo *>(loc));
 }
 
-int strcoll_l(const char *, const char *, locale_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int strcoll_l(const char *a, const char *b, locale_t) {
+	// TODO: strcoll_l should take "LC_COLLATE" into account.
+	return strcmp(a, b);
 }
 
 int getsubopt(char **__restrict__ optionp, char *const *__restrict__ keylistp, char **__restrict__ valuep) {

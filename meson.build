@@ -57,6 +57,10 @@ if not headers_only
 	c_compiler = meson.get_compiler('c')
 	cpp_compiler = meson.get_compiler('cpp')
 
+	if cpp_compiler.get_id() == 'gcc' and not cpp_compiler.version().version_compare('>=13.1.0')
+		error('GCC version 13 or higher is required; found version ' + cpp_compiler.version())
+	endif
+
 	target_triple = run_command(c_compiler.cmd_array(), '-dumpmachine', check: true).stdout()
 	use_freestnd_hdrs = get_option('use_freestnd_hdrs').disable_auto_if(
 			target_triple.to_lower().contains('mlibc'))
@@ -87,6 +91,14 @@ if not headers_only
 	)
 	libc_deps += frigg_dep
 	rtld_deps += frigg_dep
+
+	libsmarter_dep = dependency(
+		'libsmarter',
+		default_options: [],
+		fallback: ['libsmarter', 'libsmarter_dep'],
+	)
+	libc_deps += libsmarter_dep
+	rtld_deps += libsmarter_dep
 
 	mlibc_c_args = ['-Wno-unused-function', '-D__MLIBC_BUILDING_MLIBC', '-nostdinc', '-fno-builtin', '-ffreestanding']
 	mlibc_link_args = ['-nostdlib']
@@ -232,6 +244,7 @@ if host_machine.system() == 'linux'
 
 	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
 	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
+	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
 	subdir('sysdeps/linux')
 elif host_machine.system() == 'managarm'
 	# TODO: Adopt the include_directories() commands from the managarm meson.build.
@@ -287,15 +300,17 @@ endif
 # Configuration based on enabled options.
 #----------------------------------------------------------------------------------------
 
-posix_option = get_option('posix_option').require(sysdep_supported_options.get('posix')).allowed()
-linux_option = get_option('linux_option').require(sysdep_supported_options.get('linux')).allowed()
-glibc_option = get_option('glibc_option').require(sysdep_supported_options.get('glibc')).allowed()
-bsd_option = get_option('bsd_option').require(sysdep_supported_options.get('bsd')).allowed()
+posix_option = get_option('posix_option').require(sysdep_supported_options.get('posix', false)).allowed()
+linux_option = get_option('linux_option').require(sysdep_supported_options.get('linux', false)).allowed()
+glibc_option = get_option('glibc_option').require(sysdep_supported_options.get('glibc', false)).allowed()
+bsd_option = get_option('bsd_option').require(sysdep_supported_options.get('bsd', false)).allowed()
+linux_epoll_option = sysdep_supported_options.get('linux-epoll', linux_option)
 
 mlibc_conf.set10('__MLIBC_POSIX_OPTION', posix_option)
 mlibc_conf.set10('__MLIBC_LINUX_OPTION', linux_option)
 mlibc_conf.set10('__MLIBC_GLIBC_OPTION', glibc_option)
 mlibc_conf.set10('__MLIBC_BSD_OPTION', bsd_option)
+mlibc_conf.set10('__MLIBC_LINUX_EPOLL_OPTION', linux_epoll_option)
 mlibc_conf.set10('__MLIBC_SYSDEP_HAS_BITS_SYSCALL_H', provides_bits_syscall_h)
 
 rtld_include_dirs += include_directories('options/ansi/include')
@@ -358,6 +373,11 @@ if bsd_option
 	libc_include_dirs += include_directories('options/bsd/include')
 endif
 
+if linux_epoll_option
+	rtld_include_dirs += include_directories('options/linux-epoll/include')
+	libc_include_dirs += include_directories('options/linux-epoll/include')
+endif
+
 rtld_include_dirs += include_directories('options/elf/include')
 libc_include_dirs += include_directories('options/elf/include')
 libc_include_dirs += include_directories('.')
@@ -376,8 +396,10 @@ configure_file(input: 'mlibc-config.h.in',
 
 internal_sources = [
 	'options/internal/generic/allocator.cpp',
+	'options/internal/generic/c-locale-defaults.cpp',
 	'options/internal/generic/charcode.cpp',
 	'options/internal/generic/charset.cpp',
+	'options/internal/generic/ctype.cpp',
 	'options/internal/generic/debug.cpp',
 	'options/internal/generic/ensure.cpp',
 	'options/internal/generic/essential.cpp',
@@ -386,6 +408,7 @@ internal_sources = [
 	'options/internal/generic/global-config.cpp',
 	'options/internal/generic/inline-emitter.cpp',
 	'options/internal/generic/locale.cpp',
+	'options/internal/generic/locale-defaults.cpp',
 	'options/internal/generic/sigset.cpp',
 	'options/internal/generic/strings.cpp',
 	'options/internal/generic/ubsan.cpp',
@@ -472,28 +495,23 @@ subdir('options/lsb')
 subdir('options/glibc')
 subdir('options/linux')
 subdir('options/bsd')
+subdir('options/linux-epoll')
 
 rtlib_deps = []
 
 if not headers_only
 	if libgcc_dependency
-		libgcc = meson.get_compiler('c').find_library('gcc', required: false)
+		cpp_compiler = meson.get_compiler('cpp')
+		cpp_link_args = get_option('cpp_link_args')
+		libgcc_path = run_command(cpp_compiler.cmd_array(), cpp_link_args, '-print-libgcc-file-name',
+							capture: true, check: true).stdout().strip()
 
-		compiler_rt_name = 'libclang_rt.builtins-' + host_machine.cpu_family()
-		compiler_rt = meson.get_compiler('c').find_library(compiler_rt_name, required: false)
-
-		if not compiler_rt.found()
-			compiler_rt_name = 'libclang_rt.builtins'
-			compiler_rt = meson.get_compiler('c').find_library(compiler_rt_name, required: false)
+		if not fs.is_file(libgcc_path)
+			error('libgcc/compiler-rt library (' + libgcc_path + ') is missing')
 		endif
 
-		if libgcc.found()
-			rtlib_deps += libgcc
-		elif compiler_rt.found()
-			rtlib_deps += compiler_rt
-		else
-			error('neither libgcc nor ' + compiler_rt_name + ' was found')
-		endif
+		libgcc = declare_dependency(link_args: libgcc_path)
+		rtlib_deps += libgcc
 	endif
 
 	ld_cpp_args = [

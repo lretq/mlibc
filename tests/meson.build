@@ -31,6 +31,8 @@ all_test_cases = [
 	'ansi/ftell',
 	'ansi/tmpfile',
 	'ansi/mbstowcs',
+	'ansi/locale',
+	'ansi/asctime',
 	'bsd/ns_get_put',
 	'bsd/reallocarray',
 	'bsd/strl',
@@ -113,6 +115,10 @@ all_test_cases = [
 	'posix/pthread_rwlock_timedrdlock',
 	'posix/pthread_rwlock_timedwrlock',
 	'posix/sigsetjmp',
+	'posix/locale',
+	'posix/jrand48',
+	'posix/sigqueue',
+	'posix/memccpy',
 	'glibc/getopt',
 	'glibc/ffsl-ffsll',
 	'glibc/error_message_count',
@@ -171,6 +177,7 @@ host_libc_noasan_test_cases = [
 	'posix/pthread_attr', # does some stack overflowing to check stack size
 	'posix/posix_memalign',
 	'posix/search', # requires tdelete (#351)
+	'posix/locale', # encounters memory leaks
 	'ansi/calloc', # does some overflowing
 	'linux/pthread_attr', # encounters memory leaks
 ]
@@ -359,7 +366,7 @@ foreach test_name : all_test_cases
 				suite: ['host-libc', test_subdir],
 				should_fail: should_fail,
 				args: [
-					meson.source_root() + '/tests/' + test_name + '.py',
+					meson.project_source_root() + '/tests/' + test_name + '.py',
 					exec
 				],
 				timeout: timeout_sec,

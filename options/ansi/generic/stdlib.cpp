@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <ctype.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <setjmp.h>
@@ -76,13 +75,13 @@ __attribute__((__noreturn__)) void siglongjmp(sigjmp_buf buffer, int value) {
 }
 
 double strtod(const char *__restrict string, char **__restrict end) {
-	return mlibc::strtofp<double>(string, end);
+	return mlibc::strtofp<double>(string, end, mlibc::getActiveLocale());
 }
 float strtof(const char *__restrict string, char **__restrict end) {
-	return mlibc::strtofp<float>(string, end);
+	return mlibc::strtofp<float>(string, end, mlibc::getActiveLocale());
 }
 long double strtold(const char *__restrict string, char **__restrict end) {
-	return mlibc::strtofp<long double>(string, end);
+	return mlibc::strtofp<long double>(string, end, mlibc::getActiveLocale());
 }
 
 long strtol(const char *__restrict string, char **__restrict end, int base) {
@@ -458,9 +457,15 @@ int mbtowc(wchar_t *__restrict wc, const char *__restrict mb, size_t max_size) {
 	}
 }
 
-int wctomb(char *, wchar_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int wctomb(char *s, wchar_t wc) {
+	static mbstate_t state;
+
+	if (s == nullptr) {
+		memset(&state, 0, sizeof(state));
+		return 0;
+	}
+
+    return wcrtomb(s, wc, &state);
 }
 
 size_t mbstowcs(wchar_t *__restrict wcs, const char *__restrict mbs, size_t wc_limit) {
