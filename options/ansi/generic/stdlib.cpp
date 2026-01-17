@@ -22,6 +22,7 @@
 #include <mlibc/strtol.hpp>
 #include <mlibc/threads.hpp>
 #include <mlibc/global-config.hpp>
+#include <mlibc/exit.hpp>
 
 #if __MLIBC_POSIX_OPTION
 #include <pthread.h>
@@ -218,6 +219,8 @@ void exit(int status) {
 	// see https://austingroupbugs.net/view.php?id=1845
 	mlibc::thread_mutex_lock(&exit_mutex);
 
+	mlibc::processIsExiting.store(true, std::memory_order_relaxed);
+
 	__mlibc_do_finalize();
 	mlibc::sys_exit(status);
 }
@@ -407,9 +410,16 @@ int mblen(const char *mbs, size_t mb_limit) {
 		return cc->has_shift_states;
 	}
 
-	if(auto e = cc->decode_wtranscode(nseq, wseq, mblen_state); e != mlibc::charcode_error::null)
-		__ensure(!"decode_wtranscode() errors are not handled");
-	return nseq.it - mbs;
+	auto e = cc->decode_wtranscode(nseq, wseq, mblen_state);
+	if(e == mlibc::charcode_error::input_exhausted) {
+		return nseq.it - mbs;
+	} else if(e == mlibc::charcode_error::null) {
+		return 0;
+	} else {
+		__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
+		errno = EILSEQ;
+		return -1;
+	}
 }
 
 int mbtowc(wchar_t *__restrict wc, const char *__restrict mb, size_t max_size) {
@@ -430,6 +440,7 @@ int mbtowc(wchar_t *__restrict wc, const char *__restrict mb, size_t max_size) {
 			switch(e) {
 				// We keep the state, so we can simply return here.
 				case mlibc::charcode_error::input_underflow:
+				case mlibc::charcode_error::input_exhausted:
 				case mlibc::charcode_error::null: {
 					return nseq.it - mb;
 				}
@@ -476,12 +487,15 @@ size_t mbstowcs(wchar_t *__restrict wcs, const char *__restrict mbs, size_t wc_l
 
 	if(!wcs) {
 		size_t size;
-		if(auto e = cc->decode_wtranscode_length(nseq, &size, st); e != mlibc::charcode_error::null)
-			__ensure(!"decode_wtranscode() errors are not handled");
+		if(auto e = cc->decode_wtranscode_length(nseq, &size, st); e != mlibc::charcode_error::null && e != mlibc::charcode_error::input_exhausted) {
+			__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
+			errno = EILSEQ;
+			return static_cast<size_t>(-1);
+		}
 		return size;
 	}
 
-	if(auto e = cc->decode_wtranscode(nseq, wseq, st); e != mlibc::charcode_error::null) {
+	if(auto e = cc->decode_wtranscode(nseq, wseq, st); e != mlibc::charcode_error::null && e != mlibc::charcode_error::input_exhausted) {
 		errno = EILSEQ;
 		return size_t(-1);
 	}else{

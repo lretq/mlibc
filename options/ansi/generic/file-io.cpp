@@ -19,6 +19,7 @@
 #include <mlibc/file-io.hpp>
 #include <mlibc/ansi-sysdeps.hpp>
 #include <mlibc/lock.hpp>
+#include <mlibc/exit.hpp>
 
 namespace mlibc {
 
@@ -275,6 +276,10 @@ void abstract_file::purge() {
 	__unget_ptr = __buffer_ptr;
 }
 
+int abstract_file::post_flush() {
+	return 0;
+}
+
 int abstract_file::flush() {
 	if (__dirty_end != __dirty_begin) {
 		if (int e = _write_back(); e)
@@ -284,7 +289,7 @@ int abstract_file::flush() {
 	if (int e = _save_pos(); e)
 		return e;
 	purge();
-	return 0;
+	return post_flush();
 }
 
 int abstract_file::tell(off_t *current_offset) {
@@ -322,6 +327,17 @@ int abstract_file::seek(off_t offset, int whence) {
 	purge();
 
 	return 0;
+}
+
+bool abstract_file::check_orientation(stream_orientation orientation) {
+	if (_orientation == orientation) {
+		return true;
+	} else if (_orientation == stream_orientation::none) {
+		_orientation = orientation;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 int abstract_file::_init_type() {
@@ -392,7 +408,8 @@ int abstract_file::_save_pos() {
 		auto seek_offset = (off_t(__offset) - off_t(__io_offset));
 		if (int e = io_seek(seek_offset, SEEK_CUR, &new_offset); e) {
 			__status_bits |= __MLIBC_ERROR_BIT;
-			mlibc::infoLogger() << "hit io_seek() error " << e << frg::endlog;
+			if(!mlibc::processIsExiting.load(std::memory_order_relaxed))
+				mlibc::infoLogger() << "hit io_seek() error " << e << frg::endlog;
 			return e;
 		}
 		return 0;
@@ -448,6 +465,8 @@ int fd_file::close() {
 }
 
 int fd_file::reopen(const char *path, const char *mode) {
+	flush();
+
 	int mode_flags = parse_modestring(mode);
 
 	int fd;
@@ -455,7 +474,6 @@ int fd_file::reopen(const char *path, const char *mode) {
 		return e;
 	}
 
-	flush();
 	close();
 	getAllocator().deallocate(__buffer_ptr, __buffer_size + ungetBufferSize);
 
@@ -464,6 +482,8 @@ int fd_file::reopen(const char *path, const char *mode) {
 	__buffer_size = 4096;
 	_reset();
 	_fd = fd;
+	_orientation = stream_orientation::none;
+	_mbstate = {};
 
 	if(mode_flags & O_APPEND) {
 		seek(0, SEEK_END);
@@ -596,7 +616,7 @@ namespace {
 		~stdio_guard() {
 			// Only flush the files but do not close them.
 			for(auto it : mlibc::global_file_list()) {
-				if(int e = it->flush(); e)
+				if(int e = it->flush(); e && !mlibc::processIsExiting.load(std::memory_order_relaxed))
 					mlibc::infoLogger() << "mlibc warning: Failed to flush file before exit()"
 							<< frg::endlog;
 			}
@@ -731,6 +751,7 @@ void rewind(FILE *file_base) {
 	file_base->__status_bits &= ~(__MLIBC_EOF_BIT | __MLIBC_ERROR_BIT);
 }
 
+// byte-oriented (POSIX)
 int ungetc(int c, FILE *file_base) {
 	if (c == EOF)
 		return EOF;

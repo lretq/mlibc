@@ -73,6 +73,7 @@ int sys_close(int fd);
 [[gnu::weak]] int sys_readlink(const char *path, void *buffer, size_t max_size, ssize_t *length);
 [[gnu::weak]] int sys_readlinkat(int dirfd, const char *path, void *buffer, size_t max_size, ssize_t *length);
 [[gnu::weak]] int sys_rmdir(const char *path);
+[[gnu::weak]] int sys_truncate(const char *path, off_t length);
 [[gnu::weak]] int sys_ftruncate(int fd, size_t size);
 [[gnu::weak]] int sys_fallocate(int fd, off_t offset, size_t size);
 [[gnu::weak]] int sys_unlinkat(int fd, const char *path, int flags);
@@ -101,6 +102,7 @@ int sys_close(int fd);
 [[gnu::weak]] int sys_sleep(time_t *secs, long *nanos);
 [[gnu::weak]] int sys_fork(pid_t *child);
 [[gnu::weak]] int sys_execve(const char *path, char *const argv[], char *const envp[]);
+[[gnu::weak]] int sys_fexecve(int fd, char *const argv[], char *const envp[]);
 [[gnu::weak]] int sys_pselect(int num_fds, fd_set *read_set, fd_set *write_set,
 		fd_set *except_set, const struct timespec *timeout, const sigset_t *sigmask, int *num_events);
 [[gnu::weak]] int sys_getrusage(int scope, struct rusage *usage);
@@ -111,6 +113,7 @@ int sys_close(int fd);
 [[gnu::weak]] int sys_getschedparam(void *tcb, int *policy, struct sched_param *param);
 [[gnu::weak]] int sys_setschedparam(void *tcb, int policy, const struct sched_param *param);
 [[gnu::weak]] int sys_getscheduler(pid_t pid, int *policy);
+[[gnu::weak]] int sys_setscheduler(pid_t pid, int policy, const struct sched_param *param);
 [[gnu::weak]] int sys_getparam(pid_t pid, struct sched_param *param);
 [[gnu::weak]] int sys_setparam(pid_t pid, const struct sched_param *param);
 [[gnu::weak]] int sys_get_max_priority(int policy, int *out);
@@ -159,11 +162,14 @@ int sys_vm_unmap(void *pointer, size_t size);
 [[gnu::weak]] int sys_tcflow(int, int);
 [[gnu::weak]] int sys_tcflush(int fd, int queue);
 [[gnu::weak]] int sys_tcdrain(int);
+[[gnu::weak]] int sys_tcgetwinsize(int fd, struct winsize *winsz);
+[[gnu::weak]] int sys_tcsetwinsize(int fd, const struct winsize *winsz);
 [[gnu::weak]] int sys_pipe(int *fds, int flags);
 [[gnu::weak]] int sys_socketpair(int domain, int type_and_flags, int proto, int *fds);
 [[gnu::weak]] int sys_poll(struct pollfd *fds, nfds_t count, int timeout, int *num_events);
 [[gnu::weak]] int sys_ppoll(struct pollfd *fds, nfds_t count, const struct timespec *ts, const sigset_t *mask, int *num_events);
 [[gnu::weak]] int sys_ioctl(int fd, unsigned long request, void *arg, int *result);
+[[gnu::weak]] int sys_posix_devctl(int fd, int dcmd, void *__restrict dev_data_ptr, size_t nbyte, int *__restrict dev_info_ptr);
 [[gnu::weak]] int sys_getsockopt(int fd, int layer, int number,
 		void *__restrict buffer, socklen_t *__restrict size);
 [[gnu::weak]] int sys_setsockopt(int fd, int layer, int number,
@@ -225,6 +231,8 @@ int sys_vm_unmap(void *pointer, size_t size);
 [[gnu::weak]] int sys_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid);
 [[gnu::weak]] int sys_setreuid(uid_t ruid, uid_t euid);
 [[gnu::weak]] int sys_setregid(gid_t rgid, gid_t egid);
+
+[[gnu::weak]] int sys_getlogin_r(char *name, size_t name_len);
 
 [[gnu::weak]] int sys_if_indextoname(unsigned int index, char *name);
 [[gnu::weak]] int sys_if_nametoindex(const char *name, unsigned int *ret);

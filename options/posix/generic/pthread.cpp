@@ -21,13 +21,12 @@
 #include <mlibc/tid.hpp>
 #include <mlibc/threads.hpp>
 #include <mlibc/time-helpers.hpp>
-
-static bool enableTrace = false;
+#include <mlibc/global-config.hpp>
 
 struct ScopeTrace {
 	ScopeTrace(const char *file, int line, const char *function)
 	: _file(file), _line(line), _function(function) {
-		if(!enableTrace)
+		if(!mlibc::globalConfig().debugPthreadTrace)
 			return;
 		mlibc::infoLogger() << "trace: Enter scope "
 				<< _file << ":" << _line << " (in function "
@@ -35,7 +34,7 @@ struct ScopeTrace {
 	}
 
 	~ScopeTrace() {
-		if(!enableTrace)
+		if(!mlibc::globalConfig().debugPthreadTrace)
 			return;
 		mlibc::infoLogger() << "trace: Exit scope" << frg::endlog;
 	}
@@ -1409,4 +1408,14 @@ int pthread_spin_unlock(pthread_spinlock_t *__lock) {
 	__ensure(__atomic_load_n(&__lock->__lock, __ATOMIC_RELAXED) == mlibc::this_tid());
 	__atomic_store_n(&__lock->__lock, 0, __ATOMIC_RELEASE);
 	return 0;
+}
+
+int pthread_rwlockattr_setkind_np(pthread_rwlockattr_t *, int) {
+	__ensure(!"Not implemented");
+	__builtin_unreachable();
+}
+
+int pthread_rwlockattr_getkind_np(const pthread_rwlockattr_t *__restrict, int *__restrict) {
+	__ensure(!"Not implemented");
+	__builtin_unreachable();
 }

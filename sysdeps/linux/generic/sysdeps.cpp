@@ -459,9 +459,8 @@ int sys_isatty(int fd) {
 	auto ret = do_syscall(SYS_ioctl, fd, 0x5413 /* TIOCGWINSZ */, &winsizeHack);
 	if (int e = sc_error(ret); e)
 		return e;
-	auto res = sc_int_result<unsigned long>(ret);
-	if(!res) return 0;
-	return 1;
+
+	return 0;
 }
 
 #if __MLIBC_POSIX_OPTION
@@ -480,6 +479,9 @@ int sys_isatty(int fd) {
 #include <sched.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <pwd.h>
+
+#include <mlibc/utmp.hpp>
 
 int sys_msg_send(int sockfd, const struct msghdr *msg, int flags, ssize_t *length) {
 	// Work around ABI mismatches: POSIX requires us to expose some members of a particular type,
@@ -592,6 +594,13 @@ int sys_execve(const char *path, char *const argv[], char *const envp[]) {
         if (int e = sc_error(ret); e)
                 return e;
         return 0;
+}
+
+int sys_fexecve(int fd, char *const argv[], char *const envp[]) {
+	auto ret = do_syscall(SYS_execveat, fd, "", argv, envp, AT_EMPTY_PATH);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
 }
 
 int sys_sigprocmask(int how, const sigset_t *set, sigset_t *old) {
@@ -778,6 +787,20 @@ int sys_tcdrain(int fd) {
 
 int sys_tcflow(int fd, int action) {
 	auto ret = do_syscall(SYS_ioctl, fd, TCXONC, action);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
+int sys_tcgetwinsize(int fd, struct winsize *winsz) {
+	auto ret = do_syscall(SYS_ioctl, fd, TIOCGWINSZ, winsz);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
+int sys_tcsetwinsize(int fd, const struct winsize *winsz) {
+	auto ret = do_syscall(SYS_ioctl, fd, TIOCSWINSZ, winsz);
 	if (int e = sc_error(ret); e)
 		return e;
 	return 0;
@@ -1406,28 +1429,27 @@ int sys_inotify_rm_watch(int ifd, int wd) {
 }
 
 int sys_ttyname(int fd, char *buf, size_t size) {
-	if (!isatty(fd))
-		return errno;
+	if (int e = sys_isatty(fd); e)
+		return e;
 
-	char *procname;
-	if(int e = asprintf(&procname, "/proc/self/fd/%i", fd); e)
-		return ENOMEM;
-	__ensure(procname);
+	frg::string<MemoryAllocator> str {getAllocator()};
+	frg::output_to(str) << frg::fmt("/proc/self/fd/{}", fd);
 
-	ssize_t l = readlink(procname, buf, size);
-	free(procname);
+	ssize_t l;
+	if (int e = sys_readlink(str.data(), buf, size, &l); e)
+		return e;
 
-	if (l < 0)
-		return errno;
-	else if ((size_t)l >= size)
+	if ((size_t)l >= size)
 		return ERANGE;
 
 	buf[l] = '\0';
-	struct stat st1;
-	struct stat st2;
+	struct stat st1, st2;
 
-	if (stat(buf, &st1) || fstat(fd, &st2))
-		return errno;
+	if (int e1 = sys_stat(fsfd_target::path, -1, buf, 0, &st1),
+		e2 = sys_stat(fsfd_target::fd, fd, "", 0, &st2);
+		e1 || e2)
+		return e1 ? e1 : e2;
+
 	if (st1.st_dev != st2.st_dev || st1.st_ino != st2.st_ino)
 		return ENODEV;
 
@@ -1449,6 +1471,14 @@ int sys_mlockall(int flags) {
 	auto ret = do_syscall(SYS_mlockall, flags);
 	if (int e = sc_error(ret); e)
 		return e;
+	return 0;
+}
+
+int sys_get_max_priority(int policy, int *out) {
+	auto ret = do_syscall(SYS_sched_get_priority_max, policy);
+	if (int e = sc_error(ret); e)
+		return e;
+	*out = sc_int_result<int>(ret);
 	return 0;
 }
 
@@ -1488,6 +1518,21 @@ int sys_setschedparam(void *tcb, int policy, const struct sched_param *param) {
 	}
 
 	auto ret = do_syscall(SYS_sched_setscheduler, t->tid, policy, param);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
+int sys_getscheduler(pid_t pid, int *sched) {
+	auto ret = do_syscall(SYS_sched_getscheduler, pid);
+	if (int e = sc_error(ret); e)
+		return e;
+	*sched = sc_int_result<int>(ret);
+	return 0;
+}
+
+int sys_setscheduler(pid_t pid, int policy, const struct sched_param *param) {
+	auto ret = do_syscall(SYS_sched_setscheduler, pid, policy, param);
 	if (int e = sc_error(ret); e)
 		return e;
 	return 0;
@@ -1690,6 +1735,10 @@ int sys_seteuid(uid_t euid) {
 	return sys_setresuid(-1, euid, -1);
 }
 
+int sys_setegid(gid_t egid) {
+	return sys_setresgid(-1, egid, -1);
+}
+
 int sys_vm_remap(void *pointer, size_t size, size_t new_size, void **window) {
 	auto ret = do_syscall(SYS_mremap, pointer, size, new_size, MREMAP_MAYMOVE);
 	// TODO: musl fixes up EPERM errors from the kernel.
@@ -1838,6 +1887,44 @@ int sys_clock_set(int clock, time_t secs, long nanos) {
 	auto ret = do_syscall(SYS_clock_settime, clock, &tp);
 	if (int e = sc_error(ret); e)
 		return e;
+	return 0;
+}
+
+int sys_getlogin_r(char *name, size_t name_len) {
+	int cs = 0;
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+
+	int fd;
+	if(sys_open("/proc/self/loginuid", O_RDONLY, 0, &fd))
+		return EINVAL;
+
+
+	char buf[12];
+	ssize_t bytes_read = 0;
+	if(int e = sys_read(fd, buf, sizeof(buf), &bytes_read); e || !bytes_read)
+		return EINVAL;
+
+	char *uid_end = nullptr;
+	auto uid = strtol(buf, &uid_end, 10);
+	if (uid_end == buf || uid < 0)
+		return EINVAL;
+
+	sys_close(fd);
+
+	pthread_setcancelstate(cs, nullptr);
+
+	struct passwd pwd;
+	struct passwd *tpwd;
+	char pwbuf[1024];
+	if (getpwuid_r(uid, &pwd, pwbuf, sizeof(pwbuf), &tpwd) || tpwd == NULL)
+		return EINVAL;
+
+	size_t needed = strlen(pwd.pw_name) + 1;
+	if (needed > name_len)
+		return ERANGE;
+
+	memcpy(name, pwd.pw_name, needed);
+
 	return 0;
 }
 
@@ -2043,6 +2130,13 @@ int sys_sigsuspend(const sigset_t *set) {
 	return 0;
 }
 
+int sys_sigpending(sigset_t *set) {
+	auto ret = do_syscall(SYS_rt_sigpending, set, NSIG / 8);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
 int sys_sigaltstack(const stack_t *ss, stack_t *oss) {
 	auto ret = do_syscall(SYS_sigaltstack, ss, oss);
 	if (int e = sc_error(ret); e)
@@ -2134,6 +2228,13 @@ int sys_rmdir(const char *path) {
 	return 0;
 }
 
+int sys_truncate(const char *path, off_t length) {
+	auto ret = do_syscall(SYS_truncate, path, length);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
 int sys_ftruncate(int fd, size_t size) {
 	auto ret = do_syscall(SYS_ftruncate, fd, size);
 	if (int e = sc_error(ret); e)
@@ -2146,6 +2247,14 @@ int sys_readlink(const char *path, void *buf, size_t bufsiz, ssize_t *len) {
 	if (int e = sc_error(ret); e)
 		return e;
 	*len = sc_int_result<ssize_t>(ret);
+	return 0;
+}
+
+int sys_readlinkat(int dirfd, const char *path, void *buffer, size_t max_size, ssize_t *length) {
+	auto ret = do_syscall(SYS_readlinkat, dirfd, path, buffer, max_size);
+	if (int e = sc_error(ret); e)
+		return e;
+	*length = sc_int_result<ssize_t>(ret);
 	return 0;
 }
 
@@ -2536,8 +2645,8 @@ int sys_sigqueue(pid_t pid, int sig, const union sigval val) {
 	si.si_signo = sig;
 	si.si_code = SI_QUEUE;
 	si.si_value = val;
-	si.si_uid = mlibc::sys_getuid();
-	si.si_pid = mlibc::sys_getpid();
+	si.si_uid = sys_getuid();
+	si.si_pid = sys_getpid();
 
 	auto ret = do_syscall(SYS_rt_sigqueueinfo, pid, sig, &si);
 	if (int e = sc_error(ret); e)

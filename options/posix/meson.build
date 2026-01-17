@@ -16,6 +16,7 @@ libc_sources += files(
 	'generic/net-if.cpp',
 	'generic/poll.cpp',
 	'generic/posix_ctype.cpp',
+	'generic/posix_devctl.cpp',
 	'generic/posix-file-io.cpp',
 	'generic/posix_locale.cpp',
 	'generic/posix_signal.cpp',
@@ -58,6 +59,7 @@ libc_sources += files(
 	'generic/wordexp.cpp',
 	'generic/mqueue.cpp',
 	'generic/utmpx.cpp',
+	'generic/monetary.cpp',
 )
 
 if not headers_only
@@ -79,6 +81,7 @@ endif
 if not no_headers
 	install_headers(
 		'include/byteswap.h',
+		'include/devctl.h',
 		'include/dirent.h',
 		'include/dlfcn.h',
 		'include/fcntl.h',
@@ -110,6 +113,7 @@ if not no_headers
 		'include/endian.h',
 		'include/tar.h',
 		'include/cpio.h',
+		'include/monetary.h',
 	)
 	install_headers(
 		'include/arpa/inet.h',
@@ -178,6 +182,7 @@ if not no_headers
 		'include/bits/posix/pthread_t.h',
 		'include/bits/posix/timer_t.h',
 		'include/bits/posix/pthread_types.h',
+		'include/bits/posix/pthread_attr_t.h',
 		subdir: 'bits/posix'
 	)
 endif

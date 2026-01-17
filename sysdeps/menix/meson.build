@@ -2,6 +2,7 @@ sysdep_supported_options = {
 	'posix': true,
 	'glibc': true,
 	'bsd': true,
+	'linux-reboot': true,
 }
 
 rtld_sources += files(
@@ -71,6 +72,7 @@ if not no_headers
 		'include/abi-bits/utsname.h',
 		'include/abi-bits/vm-flags.h',
 		'include/abi-bits/wait.h',
+		'include/abi-bits/sigset_t.h',
 		subdir: 'abi-bits',
 		follow_symlinks: true,
 	)
@@ -79,7 +81,7 @@ if not no_headers
 		install_headers(
 			'include/abi-bits/riscv-hwprobe.h',
 			subdir: 'abi-bits',
-			follow_symlinks: true
+			follow_symlinks: true,
 		)
 	endif
 
@@ -88,12 +90,10 @@ if not no_headers
 		'include/sys/ioccom.h',
 		'include/sys/mount.h',
 		'include/sys/reboot.h',
-		subdir: 'sys'
+		subdir: 'sys',
 	)
 
-	install_headers(
-		'include/mntent.h'
-	)
+	install_headers('include/mntent.h')
 endif
 
 if not headers_only

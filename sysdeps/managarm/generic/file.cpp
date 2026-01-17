@@ -777,6 +777,16 @@ int sys_tcdrain(int) {
 	return 0;
 }
 
+int sys_tcgetwinsize(int fd, struct winsize *winsz) {
+	int result;
+	return sys_ioctl(fd, TIOCGWINSZ, winsz, &result);
+}
+
+int sys_tcsetwinsize(int fd, const struct winsize *winsz) {
+	int result;
+	return sys_ioctl(fd, TIOCSWINSZ, const_cast<struct winsize *>(winsz), &result);
+}
+
 int sys_socket(int domain, int type_and_flags, int proto, int *fd) {
 	constexpr int type_mask = int(0xF);
 	constexpr int flags_mask = ~int(0xF);
@@ -1146,16 +1156,19 @@ int sys_ppoll(
     const sigset_t *mask,
     int *num_events
 ) {
-	uint64_t former = 0, seq = 0, unused;
+	uint64_t former = 0, seq = 0, err = 0, unused;
 
-	if (mask)
-		HEL_CHECK(helSyscall2_2(
+	if (mask) {
+		HEL_CHECK(helSyscall2_3(
 		    kHelObserveSuperCall + posix::superSigMask,
 		    SIG_SETMASK,
 		    *reinterpret_cast<const HelWord *>(mask),
+		    &err,
 		    &former,
 		    &seq
 		));
+		__ensure(err == 0);
+	}
 
 	SignalGuard guard;
 	managarm::posix::CntRequest<MemoryAllocator> req(getSysdepsAllocator());
@@ -1186,10 +1199,12 @@ int sys_ppoll(
 	managarm::posix::SvrResponse<MemoryAllocator> resp(getSysdepsAllocator());
 	resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 
-	if (mask)
-		HEL_CHECK(helSyscall2_2(
-		    kHelObserveSuperCall + posix::superSigMask, SIG_SETMASK, former, &unused, &unused
+	if (mask) {
+		HEL_CHECK(helSyscall2_3(
+		    kHelObserveSuperCall + posix::superSigMask, SIG_SETMASK, former, &err, &unused, &unused
 		));
+		__ensure(err == 0);
+	}
 
 	if (resp.error() != managarm::posix::Errors::SUCCESS) {
 		return resp.error() | toErrno;
@@ -2605,12 +2620,32 @@ int sys_fchmodat(int fd, const char *pathname, mode_t mode, int flags) {
 }
 
 int sys_fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags) {
-	(void)dirfd;
-	(void)pathname;
-	(void)owner;
-	(void)group;
-	(void)flags;
-	mlibc::infoLogger() << "mlibc: sys_fchownat is a stub!" << frg::endlog;
+	SignalGuard sguard;
+
+	managarm::posix::FchownAtRequest<MemoryAllocator> req(getSysdepsAllocator());
+	req.set_fd(dirfd);
+	req.set_path(frg::string<MemoryAllocator>(getSysdepsAllocator(), pathname));
+	req.set_uid(owner);
+	req.set_gid(group);
+	req.set_flags(flags);
+
+	auto [offer, send_head, send_tail, recv_resp] = exchangeMsgsSync(
+	    getPosixLane(),
+	    helix_ng::offer(
+	        helix_ng::sendBragiHeadTail(req, getSysdepsAllocator()), helix_ng::recvInline()
+	    )
+	);
+
+	HEL_CHECK(offer.error());
+	HEL_CHECK(send_head.error());
+	HEL_CHECK(send_tail.error());
+	HEL_CHECK(recv_resp.error());
+
+	managarm::posix::FchownAtResponse<MemoryAllocator> resp(getSysdepsAllocator());
+	resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+	if (resp.error() != managarm::posix::Errors::SUCCESS)
+		return resp.error() | toErrno;
+
 	return 0;
 }
 
@@ -2910,11 +2945,17 @@ int sys_sysinfo(struct sysinfo *info) {
 	return 0;
 }
 
-int sys_fstatfs(int fd, struct statfs *buf) {
+static int do_statfs(int fd, const char *path, struct statfs *buf) {
 	SignalGuard sguard;
 
 	managarm::posix::FstatfsRequest<MemoryAllocator> req(getSysdepsAllocator());
-	req.set_fd(fd);
+
+	if (path) {
+		req.set_fd(-1);
+		req.set_path(frg::string<MemoryAllocator>(getSysdepsAllocator(), path));
+	} else {
+		req.set_fd(fd);
+	}
 
 	auto [offer, send_head, send_tail, recv_resp] = exchangeMsgsSync(
 	    getPosixLane(),
@@ -2936,7 +2977,27 @@ int sys_fstatfs(int fd, struct statfs *buf) {
 
 	memset(buf, 0, sizeof(struct statfs));
 	buf->f_type = resp.fstype();
+	buf->f_bsize = resp.block_size();
+	buf->f_blocks = resp.num_blocks();
+	buf->f_bfree = resp.blocks_free();
+	buf->f_bavail = resp.blocks_free_user();
+	buf->f_files = resp.num_inodes();
+	buf->f_ffree = resp.inodes_free();
+	buf->f_fsid.__val[0] = resp.fsid0();
+	buf->f_fsid.__val[1] = resp.fsid1();
+	buf->f_namelen = resp.max_name_length();
+	buf->f_frsize = resp.fragment_size();
+	buf->f_flags = resp.flags();
+
 	return 0;
+}
+
+int sys_statfs(const char *path, struct statfs *buf) {
+	return do_statfs(-1, path, buf);
+}
+
+int sys_fstatfs(int fd, struct statfs *buf) {
+	return do_statfs(fd, nullptr, buf);
 }
 
 int sys_prctl(int option, va_list va, int *out) {
@@ -3028,12 +3089,17 @@ int sys_prctl(int option, va_list va, int *out) {
 	}
 }
 
-int sys_statfs(const char *path, struct statfs *buf) {
+static int do_statvfs(int fd, const char *path, struct statvfs *buf) {
 	SignalGuard sguard;
 
 	managarm::posix::FstatfsRequest<MemoryAllocator> req(getSysdepsAllocator());
-	req.set_fd(-1);
-	req.set_path(frg::string<MemoryAllocator>(getSysdepsAllocator(), path));
+
+	if (path) {
+		req.set_fd(-1);
+		req.set_path(frg::string<MemoryAllocator>(getSysdepsAllocator(), path));
+	} else {
+		req.set_fd(fd);
+	}
 
 	auto [offer, send_head, send_tail, recv_resp] = exchangeMsgsSync(
 	    getPosixLane(),
@@ -3053,9 +3119,28 @@ int sys_statfs(const char *path, struct statfs *buf) {
 	if (resp.error() != managarm::posix::Errors::SUCCESS)
 		return resp.error() | toErrno;
 
-	memset(buf, 0, sizeof(struct statfs));
-	buf->f_type = resp.fstype();
+	memset(buf, 0, sizeof(struct statvfs));
+	buf->f_bsize = resp.block_size();
+	buf->f_frsize = resp.fragment_size();
+	buf->f_blocks = resp.num_blocks();
+	buf->f_bfree = resp.blocks_free();
+	buf->f_bavail = resp.blocks_free_user();
+	buf->f_files = resp.num_inodes();
+	buf->f_ffree = resp.inodes_free();
+	buf->f_favail = resp.inodes_free_user();
+	buf->f_fsid = (static_cast<uint64_t>(resp.fsid0()) << 32) | resp.fsid1();
+	buf->f_flag = resp.flags();
+	buf->f_namemax = resp.max_name_length();
+
 	return 0;
+}
+
+int sys_statvfs(const char *path, struct statvfs *buf) {
+	return do_statvfs(-1, path, buf);
+}
+
+int sys_fstatvfs(int fd, struct statvfs *buf) {
+	return do_statvfs(fd, nullptr, buf);
 }
 
 int sys_getpriority(int, id_t, int *value) {
@@ -3078,5 +3163,68 @@ int sys_setxattr(const char *, const char *, const void *, size_t, int) { return
 
 // We don't implement name_to_handle_at
 int sys_name_to_handle_at(int, const char *, struct file_handle *, int *, int) { return ENOSYS; }
+
+int sys_setgroups(size_t size, const gid_t *list) {
+	SignalGuard sguard;
+
+	managarm::posix::SetGroupsRequest<MemoryAllocator> req(getSysdepsAllocator());
+	req.set_entries(size);
+
+	auto [offer, send_req, send_list, recv_resp] = exchangeMsgsSync(
+	    getPosixLane(),
+	    helix_ng::offer(
+	        helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+	        helix_ng::sendBuffer(list, sizeof(*list) * size),
+	        helix_ng::recvInline()
+	    )
+	);
+
+	HEL_CHECK(offer.error());
+	HEL_CHECK(send_req.error());
+	HEL_CHECK(send_list.error());
+	HEL_CHECK(recv_resp.error());
+
+	managarm::posix::SetGroupsResponse resp(getSysdepsAllocator());
+	resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+
+	if (resp.error() != managarm::posix::Errors::SUCCESS)
+		return resp.error() | toErrno;
+	return 0;
+}
+
+int sys_getgroups(size_t size, gid_t *list, int *ret) {
+	SignalGuard sguard;
+
+	managarm::posix::GetGroupsRequest<MemoryAllocator> req(getSysdepsAllocator());
+	req.set_size(size);
+
+	auto [offer, send_req, recv_resp] = exchangeMsgsSync(
+	    getPosixLane(),
+	    helix_ng::offer(
+	        helix_ng::want_lane,
+	        helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+	        helix_ng::recvInline()
+	    )
+	);
+
+	HEL_CHECK(offer.error());
+	auto conversation = offer.descriptor();
+	HEL_CHECK(send_req.error());
+	HEL_CHECK(recv_resp.error());
+
+	managarm::posix::GetGroupsResponse resp(getSysdepsAllocator());
+	resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+
+	if (resp.error() != managarm::posix::Errors::SUCCESS)
+		return resp.error() | toErrno;
+
+	auto [recv_list] = exchangeMsgsSync(
+		conversation.getHandle(), helix_ng::recvBuffer(list, sizeof(*list) * resp.entries())
+	);
+	HEL_CHECK(recv_list.error());
+
+	*ret = resp.entries();
+	return 0;
+}
 
 } // namespace mlibc

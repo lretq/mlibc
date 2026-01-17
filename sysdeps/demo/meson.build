@@ -23,7 +23,6 @@ libc_include_dirs += include_directories('include')
 if not no_headers
 	install_headers(
 		'include/abi-bits/auxv.h',
-		'include/abi-bits/auxv.h',
 		'include/abi-bits/blkcnt_t.h',
 		'include/abi-bits/blksize_t.h',
 		'include/abi-bits/clockid_t.h',
@@ -70,6 +69,7 @@ if not no_headers
 		'include/abi-bits/mqueue.h',
 		'include/abi-bits/utmp-defines.h',
 		'include/abi-bits/utmpx.h',
+		'include/abi-bits/sigset_t.h',
 		subdir: 'abi-bits',
 		follow_symlinks: true
 	)
